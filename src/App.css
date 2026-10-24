@@ -247,7 +247,7 @@ h1, h2, h3, p { margin-top: 0; }
 .chart-key { width: 7px; height: 7px; border-radius: 50%; background: var(--chart-accent); }
 .chart-footnote-spacer { flex: 1; }
 .early-note { display: flex; align-items: center; gap: 3px; color: var(--green-dark); }
-.insights-dashboard { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(245px, .8fr); gap: 14px; align-items: stretch; }
+.insights-dashboard { display: grid; grid-template-columns: minmax(0, 3.2fr) minmax(220px, 1fr); gap: 14px; align-items: stretch; }
 .insights-visualizations { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .insights-dashboard > .card { min-width: 0; }
 .insights-lower { display: grid; grid-template-columns: minmax(0, 1fr); }
@@ -325,16 +325,18 @@ h1, h2, h3, p { margin-top: 0; }
 .settings-bottom-pair .feedback-row { flex-direction: row; align-items: center; gap: 7px; padding-top: 8px; margin-top: 8px; }
 .settings-bottom-pair .feedback-row > span { font-size: 9px; line-height: 1.4; }
 .settings-bottom-pair .feedback-row .button { padding: 7px 10px; }
-.settings-bottom-pair .legal-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 12px; padding: 13px 15px; }
+.settings-bottom-pair .legal-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px 16px; padding: 16px 18px; }
 .settings-bottom-pair .legal-card .settings-section-title { gap: 8px; }
-.settings-bottom-pair .legal-card .settings-icon { width: 28px; height: 28px; border-radius: 8px; }
+.settings-bottom-pair .legal-card .settings-icon { width: 32px; height: 32px; border-radius: 9px; }
 .settings-bottom-pair .legal-tabs { margin: 0; }
-.settings-bottom-pair .legal-tabs button { padding: 5px 8px; }
-.settings-bottom-pair .legal-copy { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-column: 1 / -1; align-items: start; gap: 6px 12px; min-width: 0; border: 0; padding: 0; text-align: left; }
+.settings-bottom-pair .legal-tabs button { padding: 6px 10px; font-size: 10px; }
+.settings-bottom-pair .legal-copy { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-column: 1 / -1; align-items: start; gap: 8px 14px; min-width: 0; border-top: 1px solid var(--line); padding: 12px 0 0; text-align: left; }
 .settings-bottom-pair .legal-copy strong, .settings-bottom-pair .legal-copy p, .settings-bottom-pair .legal-copy > span { overflow: visible; text-overflow: clip; white-space: normal; }
 .settings-bottom-pair .legal-copy strong { min-width: 0; }
-.settings-bottom-pair .legal-copy p { grid-column: 1 / -1; min-width: 0; margin: 0; font-size: 9px; line-height: 1.6; }
+.settings-bottom-pair .legal-copy p { grid-column: 1 / -1; min-width: 0; margin: 0; font-size: 11px; line-height: 1.65; }
 .settings-bottom-pair .legal-copy > span { grid-column: 1 / -1; }
+.settings-bottom-pair .legal-copy strong { font-size: 12px; font-weight: 650; }
+.settings-bottom-pair .legal-copy > span { font-size: 10px; }
 .pattern-metric > div { display: flex; flex-direction: column; gap: 3px; }
 .pattern-metric .metric-label { font-size: 7px; }
 .pattern-metric strong { font-family: Manrope, sans-serif; font-size: 17px; letter-spacing: -.5px; }
