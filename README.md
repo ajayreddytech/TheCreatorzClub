@@ -31,7 +31,3 @@ npm run lint
 npm run build
 npm run preview
 ```
-
-## Deployment
-
-Netlify deployment settings are defined in [`netlify.toml`](./netlify.toml). The production build command is `npm run build`, and the publish directory is `dist`. Set the Supabase environment variables in the hosting provider when cloud sync is enabled. GitHub Actions runs lint and build checks for pushes and pull requests.
