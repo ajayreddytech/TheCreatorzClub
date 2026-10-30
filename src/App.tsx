@@ -822,7 +822,7 @@ function App() {
                           const key = dateKey(day)
                           const entry = entries.find((item) => item.log_date === key)
                           const status = entry ? entry.routine_completed ? 'routine complete' : 'routine not complete' : 'no entry'
-                          return <button key={key} className={`contribution-cell ${entry?.routine_completed ? 'complete' : ''}`} data-tip={`${prettyDate(day)} — ${status}`} aria-label={`${prettyDate(day)} — ${status}`} />
+                          return <button key={key} className={`contribution-cell ${entry?.routine_completed ? 'complete' : ''} ${index >= routineRows.columns - 3 ? 'tip-end' : ''}`} data-tip={`${prettyDate(day)} — ${status}`} aria-label={`${prettyDate(day)} — ${status}`} />
                         })}
                       </div>
                     </div>)}

@@ -314,6 +314,8 @@ h1, h2, h3, p { margin-top: 0; }
 .contribution-cell { position: relative; }
 .contribution-cell::after { content: attr(data-tip); position: absolute; z-index: 20; bottom: calc(100% + 7px); left: 50%; transform: translateX(-50%); padding: 6px 8px; border-radius: 6px; background: #29352e; color: #fff; font-size: 10px; font-weight: 500; white-space: nowrap; pointer-events: none; opacity: 0; transition: none; }
 .contribution-cell:hover::after, .contribution-cell:focus-visible::after { opacity: 1; }
+/* Right-hand cells align their tooltip to the cell's right edge so it cannot widen the page. */
+.contribution-cell.tip-end::after { left: auto; right: 0; transform: none; }
 .contribution-cell.complete { background: #52a469; }
 :root[data-theme='dark'] .contribution-cell.complete { background: #49aa65; }
 .contribution-placeholder { min-width: 0; height: 43px; }
