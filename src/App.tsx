@@ -159,12 +159,12 @@ function prettyDate(date: Date, options: Intl.DateTimeFormatOptions = { weekday:
   return date.toLocaleDateString('en-US', options)
 }
 
-// Periods are calendar based: the current day, the Monday-to-Sunday week, the calendar month, and the calendar year.
+// Periods are calendar based: the current day, the Sunday-to-Saturday week, the calendar month, and the calendar year.
 function getRangeDates(range: Range, cursor: Date) {
   const start = new Date(cursor)
   const end = new Date(cursor)
   if (range === 'Week') {
-    start.setDate(start.getDate() - ((start.getDay() + 6) % 7))
+    start.setDate(start.getDate() - start.getDay())
     end.setTime(start.getTime())
     end.setDate(end.getDate() + 6)
   } else if (range === 'Month') {
@@ -610,7 +610,7 @@ function App() {
     return ticks
   }, [chartDomain])
   // Calendar layout. Year: one row per month (Jan to Dec), days 1-31 across.
-  // Week and Month: Monday-first rows of 7 days. Null cells are blank padding.
+  // Week and Month: Sunday-first rows of 7 days. Null cells are blank padding.
   const routineRows = useMemo(() => {
     const year = activeDates.start.getFullYear()
     if (range === 'Day') return { columns: 1, rows: [{ label: '', cells: [new Date(activeDates.start)] as (Date | null)[] }] }
@@ -625,7 +625,7 @@ function App() {
       return { columns: 31, rows }
     }
     const days = inclusiveDaysBetween(activeDates.start, activeDates.end)
-    const cells: (Date | null)[] = Array.from({ length: (activeDates.start.getDay() + 6) % 7 }, () => null)
+    const cells: (Date | null)[] = Array.from({ length: activeDates.start.getDay() }, () => null)
     for (let index = 0; index < days; index++) {
       const date = new Date(activeDates.start)
       date.setDate(date.getDate() + index)
@@ -813,7 +813,7 @@ function App() {
                   <div className="section-heading routine-section-heading"><div className="routine-heading-title"><span className="routine-heading-icon"><ClipboardCheck size={17} /></span><div><h3>Routine rhythm</h3><p>One tile per day, covering {insightBasis}.</p></div></div><span className="contribution-total">{periodEntries.filter((entry) => entry.routine_completed).length} complete</span></div>
                   <div className="range-control-group routine-range-controls"><RangeControls range={range} label={rangeLabel} jumpOpen={jumpOpen === 'routine'} canMoveForward={canMoveForward} onRangeChange={setRange} onMove={moveRange} onToggleJump={() => setJumpOpen(jumpOpen === 'routine' ? null : 'routine')} onJump={jumpTo} /></div>
                   <div className={`contribution-rows ${range === 'Year' ? 'year-rows' : ''}`}>
-                    {(range === 'Week' || range === 'Month') && <div className="routine-weekdays">{['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>}
+                    {(range === 'Week' || range === 'Month') && <div className="routine-weekdays">{['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>}
                     {routineRows.rows.map((row, rowIndex) => <div className="contribution-row" key={rowIndex}>
                       {row.label && <span className="contribution-row-label">{row.label}</span>}
                       <div className="contribution-row-cells" style={{ gridTemplateColumns: `repeat(${routineRows.columns}, minmax(0, 1fr))` }}>
