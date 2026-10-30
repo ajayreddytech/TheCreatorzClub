@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { motion } from 'framer-motion'
 import {
   Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -6,7 +6,7 @@ import {
 import {
   ArrowLeft, ArrowRight, ArrowUpRight, CalendarDays, Check,
   CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Clock3, Coffee,
-  ClipboardCheck, Heart, LayoutDashboard, LogOut, Moon, MoreHorizontal, Pencil, Plus,
+  ClipboardCheck, GripVertical, Heart, LayoutDashboard, LogOut, Moon, MoreHorizontal, Pencil, Plus,
   Quote, Settings, Sparkles, Sun, Sunrise, Trash2, TrendingUp,
   X,
 } from 'lucide-react'
@@ -16,6 +16,7 @@ import './App.css'
 type Entry = { log_date: string; wake_up_time: string; routine_completed: boolean }
 type RoutineTask = { id: string; title: string; position: number }
 type RoutineCheck = { task_id: string; log_date: string }
+type ChartPoint = { date: string; value: number | null; context: number | null; label: string }
 type View = 'log' | 'history' | 'insights' | 'routines' | 'settings'
 type Range = 'Day' | 'Week' | 'Month' | 'Year'
 type Theme = 'light' | 'dark'
@@ -158,20 +159,18 @@ function prettyDate(date: Date, options: Intl.DateTimeFormatOptions = { weekday:
   return date.toLocaleDateString('en-US', options)
 }
 
+// Periods are calendar based: the current day, the Monday-to-Sunday week, the calendar month, and the calendar year.
 function getRangeDates(range: Range, cursor: Date) {
   const start = new Date(cursor)
   const end = new Date(cursor)
-  if (range === 'Day') {
-    start.setHours(0, 0, 0, 0)
-    end.setHours(23, 59, 59, 999)
-  } else if (range === 'Week') {
+  if (range === 'Week') {
     start.setDate(start.getDate() - ((start.getDay() + 6) % 7))
     end.setTime(start.getTime())
     end.setDate(end.getDate() + 6)
   } else if (range === 'Month') {
     start.setDate(1)
     end.setMonth(end.getMonth() + 1, 0)
-  } else {
+  } else if (range === 'Year') {
     start.setMonth(0, 1)
     end.setMonth(11, 31)
   }
@@ -221,6 +220,8 @@ function App() {
   })
   const [newTask, setNewTask] = useState('')
   const [editingTask, setEditingTask] = useState<string | null>(null)
+  const [dragState, setDragState] = useState<{ id: string; fromIndex: number; dy: number; targetIndex: number } | null>(null)
+  const dragRef = useRef<{ id: string; fromIndex: number; startY: number; centers: number[] } | null>(null)
   const [taskDraft, setTaskDraft] = useState('')
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem(THEME_KEY)
@@ -311,7 +312,7 @@ function App() {
     return () => { mounted = false; subscription.unsubscribe() }
   }, [selectedDate, todayKey])
 
-  const saveEntry = async (entry: Entry) => {
+  const saveEntry = async (entry: Entry, syncDraft = true) => {
     const previous = entries
     setEntries((current) => [...current.filter((item) => item.log_date !== entry.log_date), entry].sort((a, b) => a.log_date.localeCompare(b.log_date)))
     if (supabase && user) {
@@ -328,13 +329,27 @@ function App() {
       }, { onConflict: 'user_id,log_date' })
       if (error) { setEntries(previous); setMessage(`Could not save to the cloud: ${error.message}`); return }
     }
-    if (entry.log_date === selectedDate) {
+    if (syncDraft && entry.log_date === selectedDate) {
       setWakeTime(entry.wake_up_time)
       setRoutine(entry.routine_completed)
     }
     setMessage('Your morning is logged. Nice work!')
     window.setTimeout(() => setMessage(''), 3000)
   }
+
+  // Each log-page control saves on its own. The untouched field keeps its stored value,
+  // or the current draft when the date has no entry yet.
+  const saveWakeTime = () => void saveEntry({
+    log_date: selectedDate,
+    wake_up_time: wakeTime,
+    routine_completed: selectedEntry?.routine_completed ?? false,
+  }, false)
+
+  const saveRoutineStatus = () => void saveEntry({
+    log_date: selectedDate,
+    wake_up_time: selectedEntry?.wake_up_time ?? wakeTime,
+    routine_completed: routine,
+  }, false)
 
   const deleteEntry = async (key: string) => {
     const previous = entries
@@ -388,6 +403,70 @@ function App() {
         setMessage(`Could not delete the routine task: ${error.message}`)
       }
     }
+  }
+
+  const reorderRoutineTask = async (taskId: string, toIndex: number) => {
+    const fromIndex = routineTasks.findIndex((task) => task.id === taskId)
+    if (fromIndex < 0 || toIndex < 0 || toIndex >= routineTasks.length || toIndex === fromIndex) return
+    const previous = routineTasks
+    const reordered = [...routineTasks]
+    const [moved] = reordered.splice(fromIndex, 1)
+    reordered.splice(toIndex, 0, moved)
+    const positioned = reordered.map((task, position) => ({ ...task, position }))
+    const changed = positioned.filter((task) => previous.find((item) => item.id === task.id)?.position !== task.position)
+    setRoutineTasks(positioned)
+    if (supabase && user) {
+      const { data: { user: authenticatedUser }, error: authError } = await supabase.auth.getUser()
+      if (authError || !authenticatedUser) {
+        setRoutineTasks(previous)
+        setMessage(`Could not verify your cloud account${authError ? `: ${authError.message}` : '.'}`)
+        return
+      }
+      const results = await Promise.all(changed.map((task) => supabase.from('routine_tasks').update({ position: task.position }).eq('id', task.id)))
+      const failed = results.find((result) => result.error)
+      if (failed?.error) {
+        setRoutineTasks(previous)
+        setMessage(`Could not reorder the routine: ${failed.error.message}`)
+      }
+    }
+  }
+
+  // Drag a step by its grip handle. Rows keep their place while dragging; a line shows where it will land,
+  // and the new order is saved when the pointer is released.
+  const routineDropTarget = (drag: { fromIndex: number; startY: number; centers: number[] }, clientY: number) => {
+    const dy = clientY - drag.startY
+    const draggedCenter = drag.centers[drag.fromIndex] + dy
+    const targetIndex = drag.centers.filter((center, index) => index !== drag.fromIndex && center < draggedCenter).length
+    return { dy, targetIndex }
+  }
+
+  const startRoutineDrag = (event: PointerEvent<HTMLButtonElement>, taskId: string, fromIndex: number) => {
+    const list = event.currentTarget.closest('.routine-task-list')
+    if (!list) return
+    const centers = Array.from(list.querySelectorAll<HTMLElement>('[data-routine-task]')).map((row) => {
+      const rect = row.getBoundingClientRect()
+      return rect.top + rect.height / 2
+    })
+    event.currentTarget.setPointerCapture(event.pointerId)
+    dragRef.current = { id: taskId, fromIndex, startY: event.clientY, centers }
+    setDragState({ id: taskId, fromIndex, dy: 0, targetIndex: fromIndex })
+  }
+
+  const moveRoutineDrag = (event: PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current
+    if (!drag) return
+    const { dy, targetIndex } = routineDropTarget(drag, event.clientY)
+    setDragState({ id: drag.id, fromIndex: drag.fromIndex, dy, targetIndex })
+  }
+
+  const endRoutineDrag = (event: PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current
+    dragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    setDragState(null)
+    if (!drag) return
+    const { targetIndex } = routineDropTarget(drag, event.clientY)
+    if (targetIndex !== drag.fromIndex) void reorderRoutineTask(drag.id, targetIndex)
   }
 
   const toggleRoutineCheck = async (taskId: string) => {
@@ -458,37 +537,57 @@ function App() {
     : null
   const chartData = useMemo(() => {
     if (range === 'Year') {
-      return Array.from({ length: 12 }, (_, month) => {
-        const date = new Date(rangeCursor.getFullYear(), month, 1)
-        const monthKey = dateKey(date).slice(0, 7)
-        const monthEntries = entries.filter((entry) => entry.log_date.slice(0, 7) === monthKey)
-        const averageTime = monthEntries.length
-          ? Math.round(monthEntries.reduce((sum, entry) => sum + parseTime(entry.wake_up_time), 0) / monthEntries.length)
+      const points: ChartPoint[] = []
+      const monthStart = new Date(activeDates.start.getFullYear(), activeDates.start.getMonth(), 1)
+      while (monthStart <= activeDates.end) {
+        const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0, 23, 59, 59, 999)
+        const bucketStart = monthStart < activeDates.start ? activeDates.start : monthStart
+        const bucketEnd = monthEnd > activeDates.end ? activeDates.end : monthEnd
+        const bucketEntries = entries.filter((entry) => {
+          const d = new Date(`${entry.log_date}T12:00:00`)
+          return d >= bucketStart && d <= bucketEnd
+        })
+        const averageTime = bucketEntries.length
+          ? Math.round(bucketEntries.reduce((sum, entry) => sum + parseTime(entry.wake_up_time), 0) / bucketEntries.length)
           : null
-        return {
-          date: monthKey,
+        const short = monthStart.toLocaleDateString('en-US', { month: 'short' })
+        points.push({
+          date: dateKey(monthStart).slice(0, 7),
           value: averageTime,
-          label: date.toLocaleDateString('en-US', { month: 'short' }),
-        }
-      })
+          context: averageTime,
+          label: monthStart.getMonth() === 0 ? `${short} ${monthStart.getFullYear()}` : short,
+        })
+        monthStart.setMonth(monthStart.getMonth() + 1)
+      }
+      return points
     }
-    const diff = inclusiveDaysBetween(activeDates.start, activeDates.end)
-    const points: { date: string; value: number | null; label: string }[] = []
-    for (let i = 0; i < diff; i++) {
-      const date = new Date(activeDates.start)
+    // Week and Month also draw a faded run of days from the neighbouring periods so the edges are not cut off.
+    // Those extra days are shown on the chart only and are left out of the insight numbers.
+    const contextDays = range === 'Week' || range === 'Month' ? 3 : 0
+    const firstDay = new Date(activeDates.start)
+    firstDay.setDate(firstDay.getDate() - contextDays)
+    const total = inclusiveDaysBetween(firstDay, activeDates.end) + contextDays
+    const periodStartKey = dateKey(activeDates.start)
+    const periodEndKey = dateKey(activeDates.end)
+    const points: ChartPoint[] = []
+    for (let i = 0; i < total; i++) {
+      const date = new Date(firstDay)
       date.setDate(date.getDate() + i)
       const key = dateKey(date)
       const found = entries.find((entry) => entry.log_date === key)
+      const wake = found ? parseTime(found.wake_up_time) : null
+      const inPeriod = key >= periodStartKey && key <= periodEndKey
       points.push({
         date: key,
-        value: found ? parseTime(found.wake_up_time) : null,
+        value: inPeriod ? wake : null,
+        context: wake,
         label: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
       })
     }
     return points
-  }, [activeDates, entries, range, rangeCursor])
+  }, [activeDates, entries, range])
   const chartDomain = useMemo(() => {
-    const values = chartData.flatMap((point) => point.value === null ? [] : [point.value])
+    const values = chartData.flatMap((point) => point.context === null ? [] : [point.context])
     if (values.length === 0) return [120, 840] as [number, number]
     const minValue = Math.min(...values)
     const maxValue = Math.max(...values)
@@ -510,20 +609,31 @@ function App() {
     }
     return ticks
   }, [chartDomain])
-  const routineDays = useMemo(() => {
+  // Calendar layout. Year: one row per month (Jan to Dec), days 1-31 across.
+  // Week and Month: Monday-first rows of 7 days. Null cells are blank padding.
+  const routineRows = useMemo(() => {
+    const year = activeDates.start.getFullYear()
+    if (range === 'Day') return { columns: 1, rows: [{ label: '', cells: [new Date(activeDates.start)] as (Date | null)[] }] }
+    if (range === 'Year') {
+      const rows = Array.from({ length: 12 }, (_, month) => {
+        const daysInMonth = new Date(year, month + 1, 0).getDate()
+        return {
+          label: new Date(year, month, 1).toLocaleDateString('en-US', { month: 'short' }),
+          cells: Array.from({ length: 31 }, (_, index) => index < daysInMonth ? new Date(year, month, index + 1) : null),
+        }
+      })
+      return { columns: 31, rows }
+    }
     const days = inclusiveDaysBetween(activeDates.start, activeDates.end)
-    const dates = Array.from({ length: days }, (_, index) => {
+    const cells: (Date | null)[] = Array.from({ length: (activeDates.start.getDay() + 6) % 7 }, () => null)
+    for (let index = 0; index < days; index++) {
       const date = new Date(activeDates.start)
       date.setDate(date.getDate() + index)
-      return date
-    })
-    const leadingBlanks = (range === 'Month' || range === 'Year')
-      ? (activeDates.start.getDay() + 6) % 7
-      : 0
-    const trailingBlanks = range === 'Year'
-      ? (7 - ((leadingBlanks + dates.length) % 7)) % 7
-      : 0
-    return { dates, leadingBlanks, trailingBlanks }
+      cells.push(date)
+    }
+    while (cells.length % 7) cells.push(null)
+    const rows = Array.from({ length: cells.length / 7 }, (_, row) => ({ label: '', cells: cells.slice(row * 7, row * 7 + 7) }))
+    return { columns: 7, rows }
   }, [activeDates, range])
   const calendarDays = useMemo(() => {
     const firstDay = new Date(monthCursor.getFullYear(), monthCursor.getMonth(), 1)
@@ -540,19 +650,17 @@ function App() {
     if (range === 'Week') next.setDate(next.getDate() + direction * 7)
     if (range === 'Month') { next.setDate(1); next.setMonth(next.getMonth() + direction) }
     if (range === 'Year') { next.setMonth(0, 1); next.setFullYear(next.getFullYear() + direction) }
-    setRangeCursor(next)
+    setRangeCursor(next > today ? new Date(today) : next)
   }
   const jumpTo = (period: Range) => { setRange(period); setRangeCursor(new Date(today)); setJumpOpen(null) }
   const rangeLabel = range === 'Day' ? prettyDate(rangeCursor) :
     range === 'Week' ? `${prettyDate(activeDates.start, { month: 'short', day: 'numeric' })} – ${prettyDate(activeDates.end, { month: 'short', day: 'numeric', year: 'numeric' })}` :
       range === 'Month' ? prettyDate(rangeCursor, { month: 'long', year: 'numeric' }) : String(rangeCursor.getFullYear())
-  const canMoveForward = range === 'Day'
-    ? dateKey(rangeCursor) < todayKey
-    : range === 'Week'
-      ? activeDates.start < getRangeDates('Week', today).start
-      : range === 'Month'
-        ? rangeCursor.getFullYear() < today.getFullYear() || (rangeCursor.getFullYear() === today.getFullYear() && rangeCursor.getMonth() < today.getMonth())
-        : rangeCursor.getFullYear() < today.getFullYear()
+  const todayStart = new Date(today)
+  todayStart.setHours(0, 0, 0, 0)
+  // Forward is allowed only while the viewed period ends before today's period starts.
+  const canMoveForward = activeDates.end < todayStart
+  const insightBasis = range === 'Day' ? 'the selected day' : `the selected ${range.toLowerCase()}`
 
   const navItems: { id: View; label: string; icon: typeof Sunrise }[] = [
     { id: 'log', label: 'Good morning', icon: Sunrise },
@@ -602,16 +710,16 @@ function App() {
                     <h2>What time did you wake up?</h2>
                     <p className="card-description">Every intentional morning starts somewhere.</p>
                     <div className="time-picker-wrap"><Clock3 size={18} /><input aria-label="Wake-up time" type="time" value={wakeTime} onChange={(event) => setWakeTime(event.target.value)} /><span className="time-hint">LOCAL TIME</span></div>
+                    <div className="field-save-row"><button className="button button-soft field-save-button" onClick={saveWakeTime}>Save wake-up time<ArrowRight size={14} /></button></div>
                     <button className={`routine-row ${routine ? 'routine-checked' : ''}`} onClick={() => setRoutine(!routine)} role="checkbox" aria-checked={routine}>
                       <span className="custom-checkbox">{routine && <Check size={15} strokeWidth={3} />}</span>
                       <span className="routine-copy"><strong>Morning routine complete</strong><small>Did you make time for yourself today?</small></span>
                       <span className={`yes-no ${routine ? 'yes' : ''}`}>{routine ? 'Yes' : 'Not yet'}</span>
                     </button>
+                    <div className="field-save-row"><button className="button button-soft field-save-button" onClick={saveRoutineStatus}>Save routine status<ArrowRight size={14} /></button></div>
                     <div className="log-footer">
                       <span><span className="privacy-dot" /> Just for you, always</span>
-                      <button className="button button-primary" onClick={() => void saveEntry({ log_date: selectedDate, wake_up_time: wakeTime, routine_completed: routine })}>
-                        {selectedEntry ? 'Update entry' : `Save ${selectedDate === todayKey ? 'today' : 'entry'}`}<ArrowRight size={16} />
-                      </button>
+                      {selectedEntry && <span className="logged-note"><Check size={12} /> Logged for {selectedDate === todayKey ? 'today' : prettyDate(new Date(`${selectedDate}T12:00:00`), { month: 'short', day: 'numeric' })}</span>}
                     </div>
                   </motion.section>
 
@@ -658,14 +766,22 @@ function App() {
                 <form className="routine-add-form" onSubmit={(event) => {
                   event.preventDefault()
                   const title = newTask.trim()
-                  if (title) void saveRoutineTask({ id: crypto.randomUUID(), title, position: routineTasks.length }, true)
+                  if (title) void saveRoutineTask({ id: crypto.randomUUID(), title, position: Math.max(-1, ...routineTasks.map((task) => task.position)) + 1 }, true)
                 }}>
                   <input aria-label="New routine step" value={newTask} onChange={(event) => setNewTask(event.target.value)} placeholder="Add a step to your morning..." maxLength={120} />
                   <button className="button button-primary" type="submit" disabled={!newTask.trim()}><Plus size={16} /> Add step</button>
                 </form>
-                {routineTasks.length ? <div className="routine-task-list">{routineTasks.map((task) => {
+                {routineTasks.length ? <div className="routine-task-list">{routineTasks.map((task, index) => {
                   const complete = routineChecks.some((check) => check.task_id === task.id && check.log_date === selectedDate)
-                  return <div className={`routine-task ${complete ? 'routine-task-complete' : ''}`} key={task.id}>
+                  const dropClass = dragState && dragState.id !== task.id && dragState.targetIndex === index
+                    ? dragState.targetIndex < dragState.fromIndex ? 'drop-above' : 'drop-below'
+                    : ''
+                  const isDragging = dragState?.id === task.id
+                  return <div data-routine-task className={`routine-task ${complete ? 'routine-task-complete' : ''} ${isDragging ? 'dragging' : ''} ${dropClass}`} style={isDragging ? { transform: `translateY(${dragState.dy}px)` } : undefined} key={task.id}>
+                    <button className="routine-drag-handle" title="Drag to reorder" aria-label={`Drag to reorder ${task.title}. Focus and press up or down arrow keys to move it.`} onPointerDown={(event) => startRoutineDrag(event, task.id, index)} onPointerMove={moveRoutineDrag} onPointerUp={endRoutineDrag} onPointerCancel={endRoutineDrag} onKeyDown={(event) => {
+                      if (event.key === 'ArrowUp') { event.preventDefault(); void reorderRoutineTask(task.id, index - 1) }
+                      if (event.key === 'ArrowDown') { event.preventDefault(); void reorderRoutineTask(task.id, index + 1) }
+                    }}><GripVertical size={16} /></button>
                     <button className="routine-task-check" onClick={() => void toggleRoutineCheck(task.id)} role="checkbox" aria-checked={complete} aria-label={`${complete ? 'Mark incomplete' : 'Mark complete'}: ${task.title}`}>{complete && <Check size={15} strokeWidth={3} />}</button>
                     {editingTask === task.id
                       ? <form className="routine-task-edit" onSubmit={(event) => { event.preventDefault(); const title = taskDraft.trim(); if (title) void saveRoutineTask({ ...task, title }, false) }}><input aria-label="Edit routine step" value={taskDraft} maxLength={120} onChange={(event) => setTaskDraft(event.target.value)} autoFocus /><button className="task-action-save" type="submit">Save</button></form>
@@ -689,32 +805,33 @@ function App() {
                 <section className="card chart-card">
                   <div className="chart-header"><div><div className="section-icon chart-icon"><TrendingUp size={18} /></div><h2>Wake-up rhythm</h2><p>Your earlier mornings rise to the top.</p></div></div>
                   <div className="range-control-group"><RangeControls range={range} label={rangeLabel} jumpOpen={jumpOpen === 'chart'} canMoveForward={canMoveForward} onRangeChange={setRange} onMove={moveRange} onToggleJump={() => setJumpOpen(jumpOpen === 'chart' ? null : 'chart')} onJump={jumpTo} /></div>
-                  <div className="chart-body"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}><defs><linearGradient id="wakeGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--chart-accent)" stopOpacity={0.24} /><stop offset="100%" stopColor="var(--chart-accent)" stopOpacity={0.015} /></linearGradient></defs><CartesianGrid vertical={false} stroke="var(--chart-grid)" strokeDasharray="3 5" /><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 11 }} tickMargin={12} minTickGap={18} /><YAxis width={55} axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 11 }} tickFormatter={(value: number) => formatMinutes(value)} domain={chartDomain} ticks={chartTicks} reversed /><Tooltip content={({ active, payload }) => active && payload?.[0] ? <div className="chart-tooltip"><span>{payload[0].payload.date}</span><strong>{formatMinutes(Number(payload[0].value))}</strong></div> : null} /><Area type="monotone" dataKey="value" stroke="var(--chart-accent)" strokeWidth={2.5} fill="url(#wakeGradient)" connectNulls={false} activeDot={{ r: 4, strokeWidth: 2, fill: 'var(--card)' }} /></AreaChart></ResponsiveContainer></div>
+                  <div className="chart-body"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}><defs><linearGradient id="wakeGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--chart-accent)" stopOpacity={0.24} /><stop offset="100%" stopColor="var(--chart-accent)" stopOpacity={0.015} /></linearGradient></defs><CartesianGrid vertical={false} stroke="var(--chart-grid)" strokeDasharray="3 5" /><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 11 }} tickMargin={12} minTickGap={18} /><YAxis width={55} axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 11 }} tickFormatter={(value: number) => formatMinutes(value)} domain={chartDomain} ticks={chartTicks} reversed /><Tooltip content={({ active, payload }) => active && payload?.[0] ? <div className="chart-tooltip"><span>{payload[0].payload.date}</span><strong>{formatMinutes(Number(payload[0].value))}</strong></div> : null} />{(range === 'Week' || range === 'Month') && <Area type="monotone" dataKey="context" stroke="var(--chart-accent)" strokeOpacity={0.28} strokeWidth={2} fill="none" connectNulls={false} activeDot={false} />}<Area type="monotone" dataKey="value" stroke="var(--chart-accent)" strokeWidth={2.5} fill="url(#wakeGradient)" connectNulls={false} activeDot={{ r: 4, strokeWidth: 2, fill: 'var(--card)' }} /></AreaChart></ResponsiveContainer></div>
                   <div className="chart-footnote"><span className="chart-key" /> Wake-up time <span className="chart-footnote-spacer" /><span className="early-note"><ArrowUpRight size={14} /> Earlier is higher</span></div>
                 </section>
                 <div className="insights-lower">
                 <section className="card contribution-card">
-                  <div className="section-heading routine-section-heading"><div className="routine-heading-title"><span className="routine-heading-icon"><ClipboardCheck size={17} /></span><div><h3>Routine rhythm</h3><p>One tile for each day in the selected {range.toLowerCase()}.</p></div></div><span className="contribution-total">{periodEntries.filter((entry) => entry.routine_completed).length} complete</span></div>
+                  <div className="section-heading routine-section-heading"><div className="routine-heading-title"><span className="routine-heading-icon"><ClipboardCheck size={17} /></span><div><h3>Routine rhythm</h3><p>One tile per day, covering {insightBasis}.</p></div></div><span className="contribution-total">{periodEntries.filter((entry) => entry.routine_completed).length} complete</span></div>
                   <div className="range-control-group routine-range-controls"><RangeControls range={range} label={rangeLabel} jumpOpen={jumpOpen === 'routine'} canMoveForward={canMoveForward} onRangeChange={setRange} onMove={moveRange} onToggleJump={() => setJumpOpen(jumpOpen === 'routine' ? null : 'routine')} onJump={jumpTo} /></div>
-                  {range === 'Month' && <div className="routine-weekdays">{['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>}
-                  <div className={range === 'Year' ? 'year-rhythm-layout' : ''}>
-                    {range === 'Year' && <div className="routine-weekdays year-weekdays">{['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>}
-                    <div className={`contribution-grid ${range === 'Year' ? 'year-grid' : `period-grid ${range.toLowerCase()}-grid`}`}>
-                      {Array.from({ length: routineDays.leadingBlanks }, (_, index) => <span key={`leading-${index}`} className="contribution-placeholder" />)}
-                      {routineDays.dates.map((day) => {
-                        const key = dateKey(day)
-                        const entry = entries.find((item) => item.log_date === key)
-                        const status = entry ? entry.routine_completed ? 'routine complete' : 'routine not complete' : 'no entry'
-                        return <button key={key} className={`contribution-cell ${entry?.routine_completed ? 'complete' : ''}`} title={`${prettyDate(day)} — ${status}`} aria-label={`${prettyDate(day)} — ${status}`} />
-                      })}
-                      {Array.from({ length: routineDays.trailingBlanks }, (_, index) => <span key={`trailing-${index}`} className="contribution-placeholder" />)}
-                    </div>
+                  <div className={`contribution-rows ${range === 'Year' ? 'year-rows' : ''}`}>
+                    {(range === 'Week' || range === 'Month') && <div className="routine-weekdays">{['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>}
+                    {routineRows.rows.map((row, rowIndex) => <div className="contribution-row" key={rowIndex}>
+                      {row.label && <span className="contribution-row-label">{row.label}</span>}
+                      <div className="contribution-row-cells" style={{ gridTemplateColumns: `repeat(${routineRows.columns}, minmax(0, 1fr))` }}>
+                        {row.cells.map((day, index) => {
+                          if (!day) return <span key={`blank-${rowIndex}-${index}`} className="contribution-placeholder" />
+                          const key = dateKey(day)
+                          const entry = entries.find((item) => item.log_date === key)
+                          const status = entry ? entry.routine_completed ? 'routine complete' : 'routine not complete' : 'no entry'
+                          return <button key={key} className={`contribution-cell ${entry?.routine_completed ? 'complete' : ''}`} data-tip={`${prettyDate(day)} — ${status}`} aria-label={`${prettyDate(day)} — ${status}`} />
+                        })}
+                      </div>
+                    </div>)}
                   </div>
                   <div className="contribution-legend"><span><i className="legend-empty" /> No entry</span><span><i className="legend-complete" /> Routine complete</span><span><i className="legend-incomplete" /> Routine not complete</span></div>
                 </section>
                 </div>
                 </div>
-                <section className="card metrics-card"><div className="section-heading"><div><h3>Your morning, at a glance</h3><p>Simple patterns from this {range.toLowerCase()}.</p></div><Sparkles size={17} className="metrics-sparkle" /></div><div className="metrics-grid">
+                <section className="card metrics-card"><div className="section-heading"><div><h3>{range} insights</h3><p>Based on {insightBasis} · {rangeLabel}</p></div><Sparkles size={17} className="metrics-sparkle" /></div><div className="metrics-grid">
                   <div className="insight-stat"><span><Clock3 size={15} /> AVERAGE WAKE-UP</span><strong>{average === null ? '—' : formatMinutes(average)}</strong></div>
                   <div className="insight-stat"><span><CheckCircle2 size={15} /> ROUTINE COMPLETION</span><strong>{routineRate === null ? '—' : `${routineRate}%`}</strong></div>
                   <div className="insight-stat"><span><Sunrise size={15} /> EARLIEST WAKE-UP</span><strong>{earliestWake === null ? '—' : formatMinutes(earliestWake)}</strong></div>
