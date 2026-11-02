@@ -253,6 +253,8 @@ function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     localStorage.setItem(THEME_KEY, theme)
+    // Keep the native status bar / task switcher colour in step with the active theme.
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#171a20' : '#f6f7f3')
   }, [theme])
 
   useEffect(() => {
@@ -822,7 +824,7 @@ function App() {
                           const key = dateKey(day)
                           const entry = entries.find((item) => item.log_date === key)
                           const status = entry ? entry.routine_completed ? 'routine complete' : 'routine not complete' : 'no entry'
-                          return <button key={key} className={`contribution-cell ${entry?.routine_completed ? 'complete' : ''} ${index >= routineRows.columns - 3 ? 'tip-end' : ''}`} data-tip={`${prettyDate(day)} — ${status}`} aria-label={`${prettyDate(day)} — ${status}`} />
+                          return <button key={key} className={`contribution-cell ${entry?.routine_completed ? 'complete' : ''} ${entry && !entry.routine_completed ? 'not-complete' : ''} ${index >= routineRows.columns - 3 ? 'tip-end' : ''}`} data-tip={`${prettyDate(day)} — ${status}`} aria-label={`${prettyDate(day)} — ${status}`} />
                         })}
                       </div>
                     </div>)}

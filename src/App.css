@@ -41,10 +41,18 @@
   --dot: rgba(255, 255, 255, .09);
 }
 
-body { background: var(--page); color: var(--ink); transition: background .2s, color .2s; }
+html { background: var(--page); }
+body { background: var(--page); color: var(--ink); transition: background .2s, color .2s; width: 100%; overflow-x: hidden; -webkit-tap-highlight-color: transparent; }
 button { border: 0; cursor: pointer; }
 a { color: inherit; }
-.app-shell { min-height: 100vh; position: relative; isolation: isolate; }
+.app-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  position: relative;
+  isolation: isolate;
+  /* Standalone (installed) mode runs edge-to-edge under the status bar and notch. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
 .app-shell::before, .app-shell::after { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none; }
 .app-shell::before {
   inset: -25%;
@@ -318,6 +326,8 @@ h1, h2, h3, p { margin-top: 0; }
 .contribution-cell.tip-end::after { left: auto; right: 0; transform: none; }
 .contribution-cell.complete { background: #52a469; }
 :root[data-theme='dark'] .contribution-cell.complete { background: #49aa65; }
+.contribution-cell.not-complete { background: #e0645c; }
+:root[data-theme='dark'] .contribution-cell.not-complete { background: #e8736b; }
 .contribution-placeholder { min-width: 0; height: 43px; }
 .year-rows .contribution-cell, .year-rows .contribution-placeholder { width: 100%; height: 18px; border-radius: 4px; }
 .contribution-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--muted); font-size: 8px; margin-top: 12px; }
@@ -326,7 +336,8 @@ h1, h2, h3, p { margin-top: 0; }
 :root[data-theme='dark'] .contribution-legend i { background: #353944; }
 .contribution-legend i.legend-complete { background: #52a469; }
 :root[data-theme='dark'] .contribution-legend i.legend-complete { background: #49aa65; }
-.contribution-legend i.legend-incomplete { background: #edf0ec; border: 1px solid #d7ddd6; }
+.contribution-legend i.legend-incomplete { background: #e0645c; }
+:root[data-theme='dark'] .contribution-legend i.legend-incomplete { background: #e8736b; }
 .average-metric { min-height: 165px; display: flex; align-items: center; flex-direction: column; justify-content: center; gap: 9px; text-align: center; }
 .average-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; color: var(--green-dark); background: var(--green-soft); }
 .average-metric > strong { font-family: Manrope, sans-serif; font-size: 26px; letter-spacing: -.8px; }
